@@ -56315,6 +56315,10 @@ function pickFloorTarget() {
 const NO_PERCH = new Set(['#202020', '#9aa3aa', '#111111', '#151515']);   // hob, basin, screens
 const PERCH_NAMES = { '#7d8a94': 'sofa', '#f4efe6': 'bed', '#9fb3c8': 'bed', '#ffffff': 'bed', '#a8825c': 'table',
   '#8b6b4f': 'chair', '#3d4650': 'chair', '#4a4a4a': 'counter', '#b89470': 'desk', '#f7f7f7': 'washer', '#5c4a3a': 'TV console' };
+const noseFree = (x, z, h) => {                           // the head must not enter walls or furniture
+  const px = x + Math.cos(h) * 0.33, pz = z + Math.sin(h) * 0.33;
+  return !blockers.some(([x0, z0, x1, z1]) => px > x0 && px < x1 && pz > z0 && pz < z1);
+};
 function surfaceAt(x, z) {
   let top = 0, col = null;
   for (const { b, c } of SCENE.boxes) {
@@ -56324,6 +56328,16 @@ function surfaceAt(x, z) {
 }
 const blockedAbove = (x, z, top) => SCENE.boxes.some(({ b }) =>
   x > b[0] && x < b[3] && z > b[2] && z < b[5] && b[1] < top + 0.3 && b[4] > top + 0.02);
+const CAT_AXIS = [-0.23, -0.1, 0.02, 0.14, 0.26, 0.34];   // along the body: tail root .. nose (m)
+function bodyFits(x, z, h, top) {                          // whole body on the same flat top, nothing in the way
+  const c = Math.cos(h), s = Math.sin(h);
+  for (const a of CAT_AXIS) for (const w of [-0.07, 0.07]) {
+    const px = x + c * a - s * w, pz = z + s * a + c * w;
+    const [t2, c2] = surfaceAt(px, pz);
+    if (Math.abs(t2 - top) > 0.03 || NO_PERCH.has(c2) || blockedAbove(px, pz, top)) return false;
+  }
+  return true;
+}
 const perches = [];
 {
   const seen = new Set();
@@ -56342,12 +56356,15 @@ const perches = [];
           if (Math.abs(t2 - top) > 0.03 || NO_PERCH.has(c2) || blockedAbove(x + dx, z + dz, top)) flat = false;
         }
         if (!flat) continue;
-        const launch = [[x0 - 0.08 - CR, z], [x1 + 0.08 + CR, z], [x, z0 - 0.08 - CR], [x, z1 + 0.08 + CR]]
+        const headings = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => (k * Math.PI) / 4).filter((h) => bodyFits(x, z, h, top));
+        if (!headings.length) continue;
+        const launch = [[x0 - 0.2 - CR, z], [x1 + 0.2 + CR, z], [x, z0 - 0.2 - CR], [x, z1 + 0.2 + CR]]
           .map(([lx, lz]) => [lx, lz, Math.hypot(lx - x, lz - z)]).sort((a, c) => a[2] - c[2])
-          .find(([lx, lz, d]) => d <= 1.1 && catFree(lx, lz));
+          .find(([lx, lz, d]) => d <= 1.2 && catFree(lx, lz) && noseFree(lx, lz, Math.atan2(z - lz, x - lx)));
         if (!launch) continue;
         seen.add(key);
-        perches.push({ p: new Vector2(x, z), y: top, name: PERCH_NAMES[col] || 'furniture', launch: new Vector2(launch[0], launch[1]) });
+        perches.push({ p: new Vector2(x, z), y: top, name: PERCH_NAMES[col] || 'furniture', headings,
+          launch: new Vector2(launch[0], launch[1]) });
       }
     }
   }
@@ -56364,9 +56381,13 @@ function pickTarget() {
   cat.goPerch = null;
   return pickFloorTarget();
 }
-function startJump(to, y0, y1) {
-  cat.jump = { from: cat.pos.clone(), to: to.clone(), y0, y1, t: 0, dur: 0.45 + 0.3 * Math.max(y0, y1) };
-  cat.heading = Math.atan2(to.y - cat.pos.y, to.x - cat.pos.x);
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+function startJump(to, y0, y1, h1, rot) {               // body turns from its current heading to h1 within rot = [u0, u1]
+  cat.jump = { from: cat.pos.clone(), to: to.clone(), y0, y1, t: 0, dur: 0.45 + 0.3 * Math.max(y0, y1), h0: cat.heading, h1, rot };
+}
+function perchHeading(pc) {                             // fitting heading closest to the direction of the leap
+  const fly = Math.atan2(pc.p.y - cat.pos.y, pc.p.x - cat.pos.x);
+  return pc.headings.reduce((best, h) => (Math.abs(angDiff(h, fly)) < Math.abs(angDiff(best, fly)) ? h : best), pc.headings[0]);
 }
 if (params.has('perchlist')) {                // test hook: page title lists perch spots by surface
   const n = {}; perches.forEach((q) => { n[q.name] = (n[q.name] || 0) + 1; });
@@ -56393,7 +56414,7 @@ function updateCat(dt) {
   if (!cat.inited) {                       // test hook: #catperch=sofa starts the cat perched there
     cat.inited = true;
     const pc = params.has('catperch') && perches.find((q) => q.name === params.get('catperch'));
-    if (pc) { cat.perch = pc; cat.pos.copy(pc.p); cat.elev = pc.y; cat.mode = 'perched'; cat.pause = 1e6; cat.lie = false; }
+    if (pc) { cat.perch = pc; cat.pos.copy(pc.p); cat.elev = pc.y; cat.heading = pc.headings[0]; cat.mode = 'perched'; cat.pause = 1e6; cat.lie = false; }
   }
   let walking = false, airborne = false;
   if (cat.mode === 'jumpUp' || cat.mode === 'jumpDown') {
@@ -56401,7 +56422,11 @@ function updateCat(dt) {
     j.t += dt;
     const u = Math.min(1, j.t / j.dur);
     cat.pos.set(j.from.x + (j.to.x - j.from.x) * u, j.from.y + (j.to.y - j.from.y) * u);
-    cat.elev = j.y0 + (j.y1 - j.y0) * u + Math.sin(Math.PI * u) * 0.22;
+    const r = Math.min(1, Math.max(0, (u - j.rot[0]) / (j.rot[1] - j.rot[0])));
+    cat.heading = j.h0 + angDiff(j.h1, j.h0) * r * r * (3 - 2 * r);
+    cat.elev = cat.mode === 'jumpUp'                                  // rise early to clear edges; on the way down, stay high then drop
+      ? j.y0 + (j.y1 - j.y0) * (1 - (1 - u) ** 3) + Math.sin(Math.PI * u) * 0.3
+      : j.y0 + (j.y1 - j.y0) * u ** 3 + Math.sin(Math.PI * u) * 0.15;
     airborne = true;
     if (u >= 1) {
       cat.elev = j.y1;
@@ -56410,7 +56435,11 @@ function updateCat(dt) {
     }
   } else if (cat.mode === 'perched') {
     cat.pause -= dt;
-    if (cat.pause <= 0) { cat.mode = 'jumpDown'; startJump(cat.perch.launch, cat.perch.y, 0); }
+    if (cat.pause <= 0) {                // keep facing along the surface until clear of it, then turn to land
+      cat.mode = 'jumpDown';
+      const out = Math.atan2(cat.perch.launch.y - cat.pos.y, cat.perch.launch.x - cat.pos.x);
+      startJump(cat.perch.launch, cat.perch.y, 0, out, [0.35, 0.8]);
+    }
   } else if (cat.pause > 0) {
     cat.pause -= dt;
     if (cat.pause <= 0) cat.target = pickTarget() || null;
@@ -56423,11 +56452,15 @@ function updateCat(dt) {
     if (Math.abs(diff) < 0.6) {
       const step = Math.min(d.length(), 0.38 * dt);
       const nx = cat.pos.x + Math.cos(cat.heading) * step, nz = cat.pos.y + Math.sin(cat.heading) * step;
-      if (catFree(nx, nz)) { cat.pos.set(nx, nz); walking = true; } else { cat.target = null; cat.goPerch = null; cat.pause = 0.5; }
+      if (catFree(nx, nz) && noseFree(nx, nz, cat.heading)) { cat.pos.set(nx, nz); walking = true; }
+      else { cat.target = null; cat.goPerch = null; cat.pause = 0.5; }
     }
     if (d.length() < 0.05) {
       if (cat.path && cat.path.length) cat.target = cat.path.shift();
-      else if (cat.goPerch) { cat.target = null; cat.perch = cat.goPerch; cat.goPerch = null; cat.mode = 'jumpUp'; startJump(cat.perch.p, 0, cat.perch.y); }
+      else if (cat.goPerch) {             // leap, twisting to a heading whose whole body fits on the surface
+        cat.target = null; cat.perch = cat.goPerch; cat.goPerch = null; cat.mode = 'jumpUp';
+        startJump(cat.perch.p, 0, cat.perch.y, perchHeading(cat.perch), [0, 0.6]);
+      }
       else { cat.target = null; cat.pause = 1.5 + Math.random() * 4; }
     }
   }
@@ -56534,11 +56567,20 @@ if (params.has('sim')) {
   for (let i = 0; i < 6000; i++) {
     updateCat(0.05);
     if (cat.mode === 'perched' && cat.perch && cat.perch !== window.__lastPerch) { window.__lastPerch = cat.perch; (window.__perched = window.__perched || []).push(cat.perch.name); }
+    { // clip probe: tail root, middle and head of the body inside any solid box at body height
+      const c = Math.cos(cat.heading), sn = Math.sin(cat.heading), m = cat.mode || 'floor';
+      for (const a of [-0.2, 0, 0.3]) {
+        const px = cat.pos.x + c * a, pz = cat.pos.y + sn * a, py = (cat.elev || 0) + 0.2;
+        if (SCENE.boxes.some(({ b, s }) => s && px > b[0] + 0.01 && px < b[3] - 0.01 && pz > b[2] + 0.01 && pz < b[5] - 0.01 && py > b[1] && py < b[4])) {
+          (window.__clip = window.__clip || {})[m] = (window.__clip[m] || 0) + 1; break;
+        }
+      }
+    }
     travelled += cat.pos.distanceTo(last); last.copy(cat.pos);
     const room = inside.find((f) => pip(f.p, cat.pos.x, cat.pos.y));
     if (room && room.label) visited.add(room.label); else if (!room) stuck++;
   }
-  document.title = `sim 300s: travelled ${travelled.toFixed(1)} m, rooms ${[...visited].join('|')}, outside-floor steps ${stuck}, perches ${perches.length}, jumped onto ${(window.__perched || []).join('|') || 'nothing'}`;
+  document.title = `sim 300s: travelled ${travelled.toFixed(1)} m, rooms ${[...visited].join('|')}, outside-floor steps ${stuck}, perches ${perches.length}, clip frames ${JSON.stringify(window.__clip || {})}, jumped onto ${(window.__perched || []).join('|') || 'nothing'}`;
 }
 if (params.has('debug')) setInterval(() => {
   document.title = `cat ${cat.pos.x.toFixed(2)},${cat.pos.y.toFixed(2)} target ${cat.target ? 'yes' : 'no'} pause ${cat.pause.toFixed(1)} frames ${frames}`;
