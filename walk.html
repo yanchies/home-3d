@@ -52,6 +52,12 @@ body{font-family:var(--font);color:var(--ink);-webkit-user-select:none;user-sele
 }
 #jump button:hover{background:rgba(111,195,232,.22);border-color:var(--go)}
 #jump button:focus-visible{outline:2px solid var(--go);outline-offset:1px}
+a.back{
+  font-family:var(--font);font-size:12.5px;font-weight:700;letter-spacing:.06em;text-decoration:none;
+  color:#0D1418;background:var(--go);border:1px solid var(--go);border-radius:4px;padding:5px 9px;margin-bottom:4px;
+}
+a.back:hover{filter:brightness(1.1)}
+#gateCard a.back{display:inline-block;margin-top:14px;font-size:13.5px;cursor:pointer}
 
 /* bottom left — minimap */
 #mapWrap{
@@ -145,6 +151,7 @@ body.touch #keys kbd,body.touch #keyline{display:none}
 </div>
 
 <div class="hud panel" id="jump">
+  <a class="back" href="./">&larr; 3D home</a>
   <div class="cap">Jump to</div>
 </div>
 
@@ -175,6 +182,7 @@ body.touch #keys kbd,body.touch #keyline{display:none}
       <b>Compare</b><span>Study on / off, for the living room</span>
     </div>
     <div id="note"></div>
+    <a class="back" href="./" onclick="event.stopPropagation()">&larr; Back to the 3D home</a>
   </div>
 </div>
 
