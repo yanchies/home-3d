@@ -1,0 +1,641 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Walk Through Our Home</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<style>
+/* Layout: full-bleed 3D viewport, HUD floated at the four corners, all of it inside the safe area. */
+:root{
+  --ink:#F2F6F8;
+  --dim:#9FB2BE;
+  --panel:rgba(14,22,28,.74);
+  --edge:rgba(255,255,255,.14);
+  --hot:#E0A64A;
+  --go:#6FC3E8;
+  --font:"Archivo Narrow","Arial Narrow",Helvetica,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%;margin:0;overflow:hidden;background:#0D1418}
+body{font-family:var(--font);color:var(--ink);-webkit-user-select:none;user-select:none;touch-action:none}
+
+#view{position:fixed;inset:0;width:100%;height:100%;display:block;background:#0D1418}
+
+.hud{position:fixed;z-index:3;pointer-events:none}
+.panel{
+  background:var(--panel);border:1px solid var(--edge);border-radius:6px;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+}
+
+/* top left — where you are */
+#where{
+  top:calc(10px + env(safe-area-inset-top,0px));
+  left:calc(10px + env(safe-area-inset-left,0px));
+  padding:9px 14px;min-width:150px;
+}
+#roomName{font-size:19px;font-weight:700;letter-spacing:.04em;line-height:1.1}
+#roomMeta{font-size:12px;color:var(--dim);letter-spacing:.09em;text-transform:uppercase;margin-top:3px;font-variant-numeric:tabular-nums}
+
+/* top right — viewpoints */
+#jump{
+  top:calc(10px + env(safe-area-inset-top,0px));
+  right:calc(10px + env(safe-area-inset-right,0px));
+  padding:8px;display:flex;flex-direction:column;gap:5px;pointer-events:auto;
+  max-height:min(62vh,440px);overflow-y:auto;
+}
+#jump .cap{font-size:10px;color:var(--dim);letter-spacing:.16em;text-transform:uppercase;padding:0 3px 2px}
+#jump button{
+  font-family:var(--font);font-size:12.5px;font-weight:600;letter-spacing:.06em;
+  color:var(--ink);background:rgba(255,255,255,.06);border:1px solid var(--edge);
+  border-radius:4px;padding:5px 9px;cursor:pointer;text-align:left;white-space:nowrap;
+}
+#jump button:hover{background:rgba(111,195,232,.22);border-color:var(--go)}
+#jump button:focus-visible{outline:2px solid var(--go);outline-offset:1px}
+
+/* bottom left — minimap */
+#mapWrap{
+  bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  left:calc(10px + env(safe-area-inset-left,0px));
+  padding:7px;line-height:0;
+}
+#map{display:block;border-radius:2px}
+
+/* bottom right — keys + toggles */
+#keys{
+  bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  right:calc(10px + env(safe-area-inset-right,0px));
+  padding:8px 12px;font-size:11.5px;color:var(--dim);letter-spacing:.07em;
+  display:flex;flex-direction:column;gap:5px;align-items:flex-end;pointer-events:auto;
+}
+#keys kbd{
+  font-family:var(--font);background:rgba(255,255,255,.1);border:1px solid var(--edge);
+  border-radius:3px;padding:0 4px;color:var(--ink);font-size:11px;
+}
+#toggles{display:flex;gap:5px}
+#toggles button{
+  font-family:var(--font);font-size:11.5px;font-weight:600;letter-spacing:.06em;
+  color:var(--dim);background:rgba(255,255,255,.06);border:1px solid var(--edge);
+  border-radius:4px;padding:4px 9px;cursor:pointer;
+}
+#toggles button[aria-pressed="true"]{color:#0D1418;background:var(--hot);border-color:var(--hot)}
+
+/* crosshair */
+#dot{
+  position:fixed;z-index:2;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;
+  border-radius:50%;background:rgba(255,255,255,.72);box-shadow:0 0 0 1.5px rgba(0,0,0,.45);
+  pointer-events:none;opacity:0;transition:opacity .2s;
+}
+body.walking #dot{opacity:1}
+
+/* touch stick */
+#stick{
+  position:fixed;z-index:4;display:none;
+  bottom:calc(26px + env(safe-area-inset-bottom,0px));
+  left:calc(26px + env(safe-area-inset-left,0px));
+  width:124px;height:124px;border-radius:50%;
+  background:rgba(14,22,28,.5);border:1px solid var(--edge);touch-action:none;
+}
+#stick i{
+  position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;
+  border-radius:50%;background:rgba(255,255,255,.3);border:1px solid rgba(255,255,255,.4);
+}
+body.touch #stick{display:block}
+body.touch #keys kbd,body.touch #keyline{display:none}
+
+/* start / pause overlay */
+#gate{
+  position:fixed;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;
+  background:rgba(8,14,18,.82);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  cursor:pointer;padding:24px;
+}
+#gate.off{display:none}
+#gateCard{
+  max-width:430px;width:100%;text-align:center;
+  background:var(--panel);border:1px solid var(--edge);border-radius:8px;padding:26px 24px;
+}
+#gateCard h1{font-size:27px;font-weight:700;letter-spacing:.02em;margin:0 0 6px;line-height:1.1}
+#gateCard p{font-size:13.5px;color:var(--dim);margin:0 0 16px;line-height:1.55;letter-spacing:.03em}
+#gateCard .go{
+  display:inline-block;font-size:14px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:#0D1418;background:var(--hot);border-radius:5px;padding:10px 22px;
+}
+#gateCard .legend{
+  margin-top:16px;padding-top:14px;border-top:1px solid var(--edge);
+  display:grid;grid-template-columns:auto 1fr;gap:5px 12px;text-align:left;
+  font-size:12px;color:var(--dim);letter-spacing:.05em;
+}
+#gateCard .legend b{color:var(--ink);font-weight:600;white-space:nowrap}
+#note{margin-top:14px;font-size:11.5px;color:var(--hot);letter-spacing:.05em;min-height:1em}
+
+@media (max-width:560px){
+  #jump{max-height:40vh}
+  #jump button{font-size:12px;padding:4px 8px}
+  #roomName{font-size:17px}
+  #mapWrap{display:none}
+}
+</style>
+
+<canvas id="view"></canvas>
+<div id="dot"></div>
+
+<div class="hud panel" id="where">
+  <div id="roomName">&mdash;</div>
+  <div id="roomMeta">step inside</div>
+</div>
+
+<div class="hud panel" id="jump">
+  <div class="cap">Jump to</div>
+</div>
+
+<div class="hud panel" id="mapWrap"><canvas id="map"></canvas></div>
+
+<div class="hud panel" id="keys">
+  <div id="keyline"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &middot; <kbd>Shift</kbd> run &middot; <kbd>Space</kbd> jump &middot; <kbd>C</kbd> crouch</div>
+  <div id="toggles">
+    <button id="tStudy" aria-pressed="true">Study</button>
+    <button id="tCeil" aria-pressed="false">Ceiling</button>
+    <button id="tFly" aria-pressed="false">Fly</button>
+  </div>
+</div>
+
+<div id="stick"><i></i></div>
+
+<div id="gate">
+  <div id="gateCard">
+    <h1>Walk through our home</h1>
+    <p>Same flat as the dollhouse, from eye level. You are 1.6&nbsp;m tall and the ceiling is 2.6&nbsp;m, so everything you see is to scale.</p>
+    <div class="go" id="goBtn">Click to walk</div>
+    <div class="legend">
+      <b>Move</b><span>W A S D or arrow keys</span>
+      <b>Look</b><span>Move the mouse</span>
+      <b>Run</b><span>Hold Shift</span>
+      <b>Jump / crouch</b><span>Space / hold C</span>
+      <b>Let go</b><span>Esc</span>
+      <b>Compare</b><span>Study on / off, for the living room</span>
+    </div>
+    <div id="note"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var S = {"H":2.6,"floors":[{"p":[[0,-0.1],[18.248,-0.1],[18.248,3.353],[17.029,3.353],[17.029,6.806],[3.086,6.806],[3.086,2.475],[0,2.475]],"c":"#c4a07a","label":null,"at":[0,0],"y":-0.004},{"p":[[0.3,0.1],[3.086,0.1],[3.086,2.35],[0.3,2.35]],"c":"#d9d7d1","label":"Yard","at":[1.7,1.5],"in":true},{"p":[[3.236,0.1],[4.1,0.1],[4.1,1.433],[6.34,1.433],[6.34,2.35],[9.7,2.35],[9.7,3.278],[3.236,3.278]],"c":"#c4a07a","label":"Hall","at":[4.7,2.35],"in":true},{"p":[[4.2,0.1],[6.24,0.1],[6.24,1.333],[4.2,1.333]],"c":"#d9d7d1","label":"Bath/WC","at":[5.22,0.717],"in":true},{"p":[[6.34,0.1],[9.7,0.1],[9.7,2.35],[6.34,2.35]],"c":"#d9d7d1","label":"Kitchen","at":[8.15,1.225],"in":true},{"p":[[9.7,0.1],[14.75,0.1],[14.75,2.2],[18.048,2.2],[18.048,3.278],[9.7,3.278]],"c":"#c4a07a","label":"Living / dining","at":[11.45,0.7],"in":true},{"p":[[14.85,0.1],[18.048,0.1],[18.048,2.1],[14.85,2.1]],"c":"#c4a07a","label":"Study","at":[16.4,1.15],"in":true},{"p":[[3.236,3.428],[9.1,3.428],[9.1,6.606],[6.34,6.606],[6.34,5.268],[3.236,5.268]],"c":"#c4a07a","label":"Bedroom 3","at":[4.5,4.65],"in":true},{"p":[[3.236,5.368],[6.24,5.368],[6.24,6.606],[3.236,6.606]],"c":"#d9d7d1","label":"En-suite","at":[4.2,5.987],"in":true},{"p":[[9.2,3.428],[13.04,3.428],[13.04,6.606],[9.2,6.606]],"c":"#c4a07a","label":"Bedroom 2","at":[10.9,6.0],"in":true},{"p":[[13.14,3.428],[16.979,3.428],[16.979,6.606],[13.14,6.606]],"c":"#c4a07a","label":"Bedroom 1","at":[15.0,3.95],"in":true},{"p":[[18.248,-0.15],[20.6,-0.15],[20.6,6.856],[18.248,6.856]],"c":"#a9a9a4","label":"Access balcony","at":[19.424,3.353],"out":true},{"p":[[17.079,3.428],[18.248,3.428],[18.248,6.856],[17.079,6.856]],"c":"#a9a9a4","label":null,"at":[17.663,5.142],"out":true}],"boxes":[{"b":[0.05,0,-0.1,18.248,2.6,0.1],"c":"#f1ede6","s":true},{"b":[3.061,0,6.606,17.129,2.6,6.806],"c":"#f1ede6","s":true},{"b":[0.0,0,-0.15,0.3,2.6,2.55],"c":"#f1ede6","s":true},{"b":[18.048,0,-0.1,18.248,2.6,3.453],"c":"#f1ede6","s":true},{"b":[3.086,0,3.278,5.9,2.6,3.428],"c":"#f1ede6","s":true},{"b":[5.9,2.1,3.278,6.75,2.6,3.428],"c":"#f1ede6","s":true},{"b":[6.75,0,3.278,9.3,2.6,3.428],"c":"#f1ede6","s":true},{"b":[9.3,2.1,3.278,10.15,2.6,3.428],"c":"#f1ede6","s":true},{"b":[10.15,0,3.278,15.3,2.6,3.428],"c":"#f1ede6","s":true},{"b":[15.3,2.1,3.278,16.1,2.6,3.428],"c":"#f1ede6","s":true},{"b":[16.1,0,3.278,17.15,2.6,3.428],"c":"#f1ede6","s":true},{"b":[17.15,2.1,3.278,18.0,2.6,3.428],"c":"#f1ede6","s":true},{"b":[17.15,2.1,3.278,18.0,2.6,3.428],"c":"#f1ede6","s":true},{"b":[18.0,0,3.278,18.223,2.6,3.428],"c":"#f1ede6","s":true},{"b":[11.325,0,3.278,12.275,2.6,3.428],"c":"#f1ede6","s":true},{"b":[3.086,0,-0.075,3.236,2.6,1.05],"c":"#f1ede6","s":true},{"b":[3.086,2.1,1.05,3.236,2.6,2.19],"c":"#f1ede6","s":true},{"b":[3.086,0,2.19,3.236,2.6,6.781],"c":"#f1ede6","s":true},{"b":[0.075,0,2.325,3.236,2.6,2.475],"c":"#f1ede6","s":true},{"b":[4.1,0,-0.05,4.2,2.6,1.433],"c":"#f1ede6","s":true},{"b":[4.1,0,1.333,4.4,2.6,1.433],"c":"#f1ede6","s":true},{"b":[4.4,2.1,1.333,5.1,2.6,1.433],"c":"#f1ede6","s":true},{"b":[5.1,0,1.333,6.34,2.6,1.433],"c":"#f1ede6","s":true},{"b":[6.24,0,-0.05,6.34,2.6,1.433],"c":"#f1ede6","s":true},{"b":[3.111,0,5.268,5.3,2.6,5.368],"c":"#f1ede6","s":true},{"b":[5.3,2.1,5.268,6.0,2.6,5.368],"c":"#f1ede6","s":true},{"b":[6.0,0,5.268,6.34,2.6,5.368],"c":"#f1ede6","s":true},{"b":[6.24,0,5.268,6.34,2.6,6.756],"c":"#f1ede6","s":true},{"b":[9.1,0,3.303,9.2,2.6,6.756],"c":"#f1ede6","s":true},{"b":[13.04,0,3.303,13.14,2.6,6.756],"c":"#f1ede6","s":true},{"b":[16.979,0,3.303,17.079,2.6,6.756],"c":"#f1ede6","s":true},{"b":[14.75,0,0.1,14.85,2.6,2.2],"c":"#f1ede6","s":true,"g":"study"},{"b":[14.75,0,2.1,15.0,2.6,2.2],"c":"#f1ede6","s":true,"g":"study"},{"b":[15.0,2.1,2.1,15.8,2.6,2.2],"c":"#f1ede6","s":true,"g":"study"},{"b":[15.8,0,2.1,15.9,2.6,2.2],"c":"#f1ede6","s":true,"g":"study"},{"b":[16.95,0,2.1,18.198,2.6,2.2],"c":"#f1ede6","s":true,"g":"study"},{"b":[10.075,0,3.278,10.825,2.6,3.428],"c":"#f1ede6","s":true},{"b":[2.95,0,-0.25,3.45,2.6,0.25],"c":"#e6e1d8","s":true},{"b":[2.95,0,3.103,3.45,2.6,3.603],"c":"#e6e1d8","s":true},{"b":[2.95,0,6.456,3.45,2.6,6.956],"c":"#e6e1d8","s":true},{"b":[8.6,0,-0.15,9.3,2.6,0.15],"c":"#e6e1d8","s":true},{"b":[8.6,0,3.203,9.3,2.6,3.503],"c":"#e6e1d8","s":true},{"b":[8.6,0,6.556,9.3,2.6,6.856],"c":"#e6e1d8","s":true},{"b":[14.35,0,-0.15,15.05,2.6,0.15],"c":"#e6e1d8","s":true},{"b":[14.35,0,3.203,15.05,2.6,3.503],"c":"#e6e1d8","s":true},{"b":[14.35,0,6.556,15.05,2.6,6.856],"c":"#e6e1d8","s":true},{"b":[19.9,0,-0.15,20.6,2.6,0.15],"c":"#e6e1d8","s":true},{"b":[19.9,0,3.203,20.6,2.6,3.503],"c":"#e6e1d8","s":true},{"b":[19.9,0,6.556,20.6,2.6,6.856],"c":"#e6e1d8","s":true},{"b":[5.9,0,3.428,5.94,2.08,4.238],"c":"#b08860","s":true},{"b":[16.06,0,3.428,16.1,2.08,4.188],"c":"#b08860","s":true},{"b":[15.0,0,1.34,15.04,2.08,2.1],"c":"#b08860","s":true,"g":"study"},{"b":[9.3,0,3.428,9.34,2.08,4.238],"c":"#b08860","s":true},{"b":[17.96,0,2.468,18.0,2.08,3.278],"c":"#5b3b25","s":true},{"b":[17.96,0,3.428,18.0,2.08,4.238],"c":"#2b2b2b","s":true,"o":0.55},{"b":[5.1,0,1.448,5.8,2.08,1.478],"c":"#b08860","s":true},{"b":[4.6,0,5.223,5.3,2.08,5.253],"c":"#b08860","s":true},{"b":[2.436,0,0.15,3.036,0.85,0.75],"c":"#f7f7f7","s":true},{"b":[0.3,0,0.1,1.5,2.1,0.7],"c":"#c49a6c","s":true},{"b":[6.34,0,0.1,9.05,0.86,0.7],"c":"#e9e4da","s":true},{"b":[6.34,0.86,0.1,9.05,0.9,0.7],"c":"#4a4a4a","s":true},{"b":[7.04,0.9,0.19,7.56,0.92,0.61],"c":"#9aa3aa","s":false},{"b":[8.19,0.9,0.19,8.71,0.92,0.61],"c":"#202020","s":false},{"b":[9.05,0,0.1,9.7,1.8,0.75],"c":"#d9dde0","s":true},{"b":[6.34,0,0.7,6.94,0.86,1.75],"c":"#e9e4da","s":true},{"b":[6.34,0.86,0.7,6.94,0.9,1.75],"c":"#4a4a4a","s":true},{"b":[7.84,0,1.75,9.7,0.86,2.35],"c":"#e9e4da","s":true},{"b":[7.84,0.86,1.75,9.7,0.9,2.35],"c":"#4a4a4a","s":true},{"b":[9.7,0.72,1.0,10.5,0.76,2.35],"c":"#a8825c","s":true},{"b":[9.74,0,1.04,9.78,0.72,1.08],"c":"#6b4f36","s":true},{"b":[10.42,0,1.04,10.46,0.72,1.08],"c":"#6b4f36","s":true},{"b":[9.74,0,2.27,9.78,0.72,2.31],"c":"#6b4f36","s":true},{"b":[10.42,0,2.27,10.46,0.72,2.31],"c":"#6b4f36","s":true},{"b":[9.875,0,0.5,10.325,0.46,0.95],"c":"#8b6b4f","s":true},{"b":[9.875,0,0.5,10.325,0.9,0.55],"c":"#8b6b4f","s":true},{"b":[10.55,0,1.15,11.0,0.46,1.6],"c":"#8b6b4f","s":true},{"b":[10.95,0,1.15,11.0,0.9,1.6],"c":"#8b6b4f","s":true},{"b":[10.55,0,1.75,11.0,0.46,2.2],"c":"#8b6b4f","s":true},{"b":[10.95,0,1.75,11.0,0.9,2.2],"c":"#8b6b4f","s":true},{"b":[12.1,0,0.1,13.5,0.45,0.45],"c":"#5c4a3a","s":true},{"b":[12.18,0.9,0.13,13.42,1.6,0.17],"c":"#111111","s":true},{"b":[12.3,0,1.58,13.3,0.4,2.03],"c":"#a8825c","s":true},{"b":[11.75,0,2.378,13.85,0.42,3.278],"c":"#7d8a94","s":true},{"b":[11.75,0,3.058,13.85,0.82,3.278],"c":"#6e7b85","s":true},{"b":[11.75,0,2.378,11.93,0.6,3.278],"c":"#6e7b85","s":true},{"b":[13.67,0,2.378,13.85,0.6,3.278],"c":"#6e7b85","s":true},{"b":[15.9,0,0.1,17.5,0.75,0.7],"c":"#b89470","s":true,"g":"study"},{"b":[3.3,0,3.428,5.8,2.4,4.028],"c":"#c49a6c","s":true},{"b":[7.3,0,4.526,8.82,0.5,6.556],"c":"#f4efe6","s":true},{"b":[7.3,0,6.496,8.82,1,6.556],"c":"#8b6b4f","s":true},{"b":[7.42,0.5,6.076,8.7,0.62,6.476],"c":"#ffffff","s":true},{"b":[7.3,0.5,4.526,8.82,0.56,5.64],"c":"#9fb3c8","s":false},{"b":[10.1,0,4.526,11.62,0.5,6.556],"c":"#f4efe6","s":true},{"b":[10.1,0,6.496,11.62,1.0,6.556],"c":"#8b6b4f","s":true},{"b":[10.22,0.5,6.076,11.5,0.62,6.476],"c":"#ffffff","s":true},{"b":[10.1,0.5,4.526,11.62,0.56,5.643],"c":"#9fb3c8","s":false},{"b":[12.44,0,3.428,13.04,2.4,6.606],"c":"#c49a6c","s":true},{"b":[13.14,0,3.428,13.74,2.4,6.606],"c":"#c49a6c","s":true},{"b":[14.5,0,4.526,16.02,0.5,6.556],"c":"#f4efe6","s":true},{"b":[14.5,0,6.496,16.02,1.0,6.556],"c":"#8b6b4f","s":true},{"b":[14.62,0.5,6.076,15.9,0.62,6.476],"c":"#ffffff","s":true},{"b":[14.5,0.5,4.526,16.02,0.56,5.643],"c":"#9fb3c8","s":false},{"b":[15.9,0,2.2,16.95,2.05,2.55],"c":"#c49a6c","s":true},{"b":[15.9,0,2.1,16.95,2.6,2.2],"c":"#f1ede6","s":true,"g":"study"},{"b":[3.9099999999999997,0.06,3.398,3.94,2.34,3.428],"c":"#8b6b4f","s":true},{"b":[3.9099999999999997,0.06,4.028,3.94,2.34,4.058],"c":"#8b6b4f","s":true},{"b":[4.535,0.06,3.398,4.5649999999999995,2.34,3.428],"c":"#8b6b4f","s":true},{"b":[4.535,0.06,4.028,4.5649999999999995,2.34,4.058],"c":"#8b6b4f","s":true},{"b":[5.16,0.06,3.398,5.1899999999999995,2.34,3.428],"c":"#8b6b4f","s":true},{"b":[5.16,0.06,4.028,5.1899999999999995,2.34,4.058],"c":"#8b6b4f","s":true},{"b":[12.41,0.06,4.0486,12.44,2.34,4.0786],"c":"#8b6b4f","s":true},{"b":[13.04,0.06,4.0486,13.069999999999999,2.34,4.0786],"c":"#8b6b4f","s":true},{"b":[12.41,0.06,4.6842,12.44,2.34,4.7141999999999991],"c":"#8b6b4f","s":true},{"b":[13.04,0.06,4.6842,13.069999999999999,2.34,4.7141999999999991],"c":"#8b6b4f","s":true},{"b":[12.41,0.06,5.3198,12.44,2.34,5.3497999999999992],"c":"#8b6b4f","s":true},{"b":[13.04,0.06,5.3198,13.069999999999999,2.34,5.3497999999999992],"c":"#8b6b4f","s":true},{"b":[12.41,0.06,5.9554,12.44,2.34,5.9853999999999994],"c":"#8b6b4f","s":true},{"b":[13.04,0.06,5.9554,13.069999999999999,2.34,5.9853999999999994],"c":"#8b6b4f","s":true},{"b":[13.110000000000001,0.06,4.0486,13.14,2.34,4.0786],"c":"#8b6b4f","s":true},{"b":[13.74,0.06,4.0486,13.77,2.34,4.0786],"c":"#8b6b4f","s":true},{"b":[13.110000000000001,0.06,4.6842,13.14,2.34,4.7141999999999991],"c":"#8b6b4f","s":true},{"b":[13.74,0.06,4.6842,13.77,2.34,4.7141999999999991],"c":"#8b6b4f","s":true},{"b":[13.110000000000001,0.06,5.3198,13.14,2.34,5.3497999999999992],"c":"#8b6b4f","s":true},{"b":[13.74,0.06,5.3198,13.77,2.34,5.3497999999999992],"c":"#8b6b4f","s":true},{"b":[13.110000000000001,0.06,5.9554,13.14,2.34,5.9853999999999994],"c":"#8b6b4f","s":true},{"b":[13.74,0.06,5.9554,13.77,2.34,5.9853999999999994],"c":"#8b6b4f","s":true},{"b":[15.92,0.45,2.55,16.93,0.48,2.58],"c":"#8b6b4f","s":true},{"b":[15.92,0.9,2.55,16.93,0.93,2.58],"c":"#8b6b4f","s":true},{"b":[15.92,1.35,2.55,16.93,1.3800000000000001,2.58],"c":"#8b6b4f","s":true},{"b":[15.92,1.8,2.55,16.93,1.83,2.58],"c":"#8b6b4f","s":true}],"views":{"Dollhouse":null,"Arriving (balcony)":{"pos":[17.56,1.6,6.3],"yaw":-90,"pitch":-6},"Entrance (inside)":{"pos":[17.45,1.6,2.75],"yaw":180,"pitch":-4},"Living (sofa)":{"pos":[12.8,1.15,2.85],"yaw":-90,"pitch":-2},"Kitchen":{"pos":[7.3,1.6,1.25],"yaw":0,"pitch":-8},"Dining":{"pos":[10.78,1.2,1.38],"yaw":180,"pitch":-6},"Hall":{"pos":[6.8,1.6,2.9],"yaw":200,"pitch":-8},"Bedroom 3":{"pos":[4.0,1.6,4.4],"yaw":20,"pitch":-12},"Bedroom 2":{"pos":[9.75,1.6,3.8],"yaw":45,"pitch":-12},"Bedroom 1":{"pos":[15.7,1.6,3.75],"yaw":70,"pitch":-12},"Study":{"pos":[15.4,1.6,1.85],"yaw":-40,"pitch":-10}},"title":"Our home","centre":[9.1,0,3.35],"doors":[{"id":"o_ext","pts":[[2.736,1.62],[3.586,1.62]],"gap":[3.026,1.05,3.296,2.19]},{"id":"d_bed3","pts":[[6.325,2.928],[6.325,3.778]],"gap":[5.9,3.218,6.75,3.488]},{"id":"d_bed1","pts":[[15.7,2.928],[15.7,3.778]],"gap":[15.3,3.218,16.1,3.488]},{"id":"d_study","pts":[[15.4,1.75],[15.4,2.55]],"gap":[15.0,2.04,15.8,2.26]},{"id":"d_bed2","pts":[[9.725,2.928],[9.725,3.778]],"gap":[9.3,3.218,10.15,3.488]},{"id":"d_main","pts":[[17.575,2.928],[17.575,3.778]],"gap":[17.15,3.218,18.0,3.488]},{"id":"gate","pts":[[17.575,2.928],[17.575,3.778]],"gap":[17.15,3.218,18.0,3.488]},{"id":"d_bath","pts":[[4.75,0.983],[4.75,1.783]],"gap":[4.4,1.273,5.1,1.493]},{"id":"d_ensuite","pts":[[5.65,4.918],[5.65,5.718]],"gap":[5.3,5.208,6.0,5.428]}]};
+
+var H = S.H || 2.6, EYE = 1.6, CROUCH = 1.05, RAD = 0.25, GRAV = 11.5;
+var D2R = Math.PI / 180;
+
+// ---------------------------------------------------------------- scene
+var canvas = document.getElementById('view');
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+var scene = new THREE.Scene();
+var SKY = new THREE.Color('#b9d3e4');
+scene.background = SKY;
+scene.fog = new THREE.Fog(SKY, 30, 72);
+var camera = new THREE.PerspectiveCamera(73, 1, 0.04, 220);
+camera.rotation.order = 'YXZ';
+
+// open-topped by default, so daylight does the work; switching the ceiling on
+// dims the sky and hands over to the room lamps
+var OPEN = { hemi: 0.78, sun: 0.52 }, SHUT = { hemi: 0.30, sun: 0.14 };
+var hemi = new THREE.HemisphereLight(0xffffff, 0x9b8d7a, OPEN.hemi);
+scene.add(hemi);
+scene.add(new THREE.AmbientLight(0xffffff, 0.14));
+var sun = new THREE.DirectionalLight(0xfff2dd, OPEN.sun);
+sun.position.set(7, 16, -9);
+scene.add(sun);
+
+var matCache = {};
+function mat(hex, opacity, dbl) {
+  var key = hex + '|' + (opacity || 1) + '|' + (dbl ? 1 : 0);
+  if (matCache[key]) return matCache[key];
+  var m = new THREE.MeshPhongMaterial({ color: new THREE.Color(hex), shininess: 3, specular: 0x0c0c0c });
+  if (dbl) m.side = THREE.DoubleSide;
+  if (opacity && opacity < 1) { m.transparent = true; m.opacity = opacity; }
+  matCache[key] = m;
+  return m;
+}
+
+// ground slab, so the model reads as sitting on something
+var slab = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), mat('#6d7a72', 1, true));
+slab.rotation.x = Math.PI / 2;
+slab.position.set(9, -0.06, 3.3);
+scene.add(slab);
+
+// floors
+function shapeOf(pts) {
+  var s = new THREE.Shape();
+  for (var i = 0; i < pts.length; i++) {
+    if (i === 0) s.moveTo(pts[i][0], pts[i][1]); else s.lineTo(pts[i][0], pts[i][1]);
+  }
+  s.closePath();
+  return s;
+}
+for (var i = 0; i < S.floors.length; i++) {
+  var f = S.floors[i];
+  var m = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(f.p)), mat(f.c, 1, true));
+  m.rotation.x = Math.PI / 2;
+  m.position.y = (typeof f.y === 'number' ? f.y : 0);
+  scene.add(m);
+}
+
+// walls, joinery, furniture. Boxes carrying a "g" go into a named group that
+// can be lifted out whole, so the study partition can come and go.
+var colliders = [];
+var groups = {};
+var hidden = {};
+for (var i = 0; i < S.boxes.length; i++) {
+  var b = S.boxes[i], q = b.b;
+  var x0 = q[0], y0 = q[1], z0 = q[2], x1 = q[3], y1 = q[4], z1 = q[5];
+  var mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mat(b.c, b.o, false));
+  mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  if (b.g) {
+    if (!groups[b.g]) { groups[b.g] = new THREE.Group(); scene.add(groups[b.g]); }
+    groups[b.g].add(mesh);
+  } else {
+    scene.add(mesh);
+  }
+  // waist-height things block you; door lintels (y0 >= 2.1) and rugs do not
+  if (y1 > 0.40 && y0 < 1.70) colliders.push({ x0: x0, z0: z0, x1: x1, z1: z1, g: b.g || null });
+}
+
+// bounds of everything, for the map and for a fence round the site
+var BX0 = 1e9, BX1 = -1e9, BZ0 = 1e9, BZ1 = -1e9;
+for (var i = 0; i < S.floors.length; i++) {
+  var p = S.floors[i].p;
+  for (var j = 0; j < p.length; j++) {
+    BX0 = Math.min(BX0, p[j][0]); BX1 = Math.max(BX1, p[j][0]);
+    BZ0 = Math.min(BZ0, p[j][1]); BZ1 = Math.max(BZ1, p[j][1]);
+  }
+}
+var FEN = 0.45;
+colliders.push({ x0: BX0 - FEN - 1, z0: BZ0 - FEN - 1, x1: BX0 - FEN, z1: BZ1 + FEN + 1 });
+colliders.push({ x0: BX1 + FEN, z0: BZ0 - FEN - 1, x1: BX1 + FEN + 1, z1: BZ1 + FEN + 1 });
+colliders.push({ x0: BX0 - FEN - 1, z0: BZ0 - FEN - 1, x1: BX1 + FEN + 1, z1: BZ0 - FEN });
+colliders.push({ x0: BX0 - FEN - 1, z0: BZ1 + FEN, x1: BX1 + FEN + 1, z1: BZ1 + FEN + 1 });
+
+// ceiling + room lamps, off until asked for
+var ceiling = new THREE.Group();
+ceiling.visible = false;
+scene.add(ceiling);
+for (var i = 0; i < S.floors.length; i++) {
+  var f = S.floors[i];
+  if (!f['in']) continue;
+  var c = new THREE.Mesh(new THREE.ShapeGeometry(shapeOf(f.p)), mat('#efece6', 1, true));
+  c.rotation.x = Math.PI / 2;
+  c.position.y = H;
+  ceiling.add(c);
+  if (f.at) {
+    var lamp = new THREE.PointLight(0xffe9c9, 0.62, 8.5);
+    lamp.position.set(f.at[0], H - 0.25, f.at[1]);
+    ceiling.add(lamp);
+  }
+}
+
+// ---------------------------------------------------------------- rooms
+function polyArea(p) {
+  var a = 0;
+  for (var i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]);
+  return Math.abs(a / 2);
+}
+function inPoly(x, z, p) {
+  var c = false;
+  for (var i = 0, j = p.length - 1; i < p.length; j = i++) {
+    var xi = p[i][0], zi = p[i][1], xj = p[j][0], zj = p[j][1];
+    if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi)) c = !c;
+  }
+  return c;
+}
+var rooms = [];
+for (var i = 0; i < S.floors.length; i++) {
+  var f = S.floors[i];
+  if (!f.label) continue;
+  rooms.push({ name: f.label, p: f.p, area: polyArea(f.p), outside: !!f.out });
+}
+rooms.sort(function (a, b) { return a.area - b.area; });
+
+function roomAt(x, z) {
+  for (var i = 0; i < rooms.length; i++) if (inPoly(x, z, rooms[i].p)) return rooms[i];
+  return null;
+}
+
+// ---------------------------------------------------------------- player
+var views = [];
+for (var k in S.views) {
+  if (S.views[k] && S.views[k].pos) views.push({ name: k, v: S.views[k] });
+}
+var startView = null;
+for (var i = 0; i < views.length; i++) if (/entrance/i.test(views[i].name)) startView = views[i];
+if (!startView) startView = views[0];
+
+var P = { x: 17.45, z: 2.75, y: EYE, yaw: Math.PI, pitch: -0.07, vy: 0, air: false, fly: false };
+function goTo(v) {
+  P.x = v.pos[0]; P.z = v.pos[2];
+  P.y = EYE; P.vy = 0; P.air = false;
+  P.yaw = (v.yaw || 0) * D2R;
+  P.pitch = (v.pitch || 0) * D2R;
+}
+if (startView) goTo(startView.v);
+
+var jump = document.getElementById('jump');
+for (var i = 0; i < views.length; i++) {
+  (function (entry) {
+    var b = document.createElement('button');
+    b.textContent = entry.name;
+    b.addEventListener('click', function (e) { e.stopPropagation(); goTo(entry.v); b.blur(); });
+    jump.appendChild(b);
+  })(views[i]);
+}
+
+// ---------------------------------------------------------------- input
+var keys = {};
+var walking = false, locked = false, dragging = false, lastPX = 0, lastPY = 0;
+var gate = document.getElementById('gate');
+var note = document.getElementById('note');
+var isTouch = window.matchMedia('(hover:none)').matches || ('ontouchstart' in window);
+if (isTouch) document.body.classList.add('touch');
+
+function start() {
+  gate.classList.add('off');
+  walking = true;
+  document.body.classList.add('walking');
+  if (!isTouch && canvas.requestPointerLock) {
+    try { canvas.requestPointerLock(); } catch (e) { /* fall back to drag */ }
+    setTimeout(function () {
+      if (walking && !locked) note.textContent = 'Pointer lock is off here — hold the mouse down to look around.';
+    }, 500);
+  }
+}
+function stop() {
+  walking = false;
+  document.body.classList.remove('walking');
+  gate.classList.remove('off');
+}
+gate.addEventListener('click', start);
+canvas.addEventListener('click', function () { if (!walking) start(); });
+document.addEventListener('pointerlockchange', function () {
+  locked = (document.pointerLockElement === canvas);
+  if (!locked && walking && !isTouch) stop();
+});
+
+addEventListener('keydown', function (e) {
+  if (e.code === 'Escape') { stop(); return; }
+  keys[e.code] = true;
+  if (walking && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) >= 0) e.preventDefault();
+});
+addEventListener('keyup', function (e) { keys[e.code] = false; });
+addEventListener('blur', function () { keys = {}; });
+
+function look(dx, dy) {
+  P.yaw += dx * 0.0022;
+  P.pitch -= dy * 0.0022;
+  if (P.pitch > 1.45) P.pitch = 1.45;
+  if (P.pitch < -1.45) P.pitch = -1.45;
+}
+addEventListener('mousemove', function (e) {
+  if (locked) look(e.movementX || 0, e.movementY || 0);
+  else if (dragging) look(e.clientX - lastPX, e.clientY - lastPY), lastPX = e.clientX, lastPY = e.clientY;
+});
+canvas.addEventListener('mousedown', function (e) {
+  if (!walking || locked) return;
+  dragging = true; lastPX = e.clientX; lastPY = e.clientY;
+});
+addEventListener('mouseup', function () { dragging = false; });
+
+// touch: left stick walks, anywhere else looks
+var stick = document.getElementById('stick'), knob = stick.firstElementChild;
+var stickId = null, lookId = null, ax = 0, ay = 0;
+function stickSet(cx, cy) {
+  var r = stick.getBoundingClientRect();
+  var dx = cx - (r.left + r.width / 2), dy = cy - (r.top + r.height / 2);
+  var lim = r.width / 2 - 18, len = Math.hypot(dx, dy);
+  if (len > lim) { dx = dx / len * lim; dy = dy / len * lim; }
+  knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  ax = dx / lim; ay = dy / lim;
+}
+function stickClear() { ax = 0; ay = 0; knob.style.transform = ''; }
+addEventListener('touchstart', function (e) {
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i], r = stick.getBoundingClientRect();
+    var inStick = t.clientX > r.left - 24 && t.clientX < r.right + 24 && t.clientY > r.top - 24 && t.clientY < r.bottom + 24;
+    if (inStick && stickId === null) { stickId = t.identifier; stickSet(t.clientX, t.clientY); }
+    else if (lookId === null) { lookId = t.identifier; lastPX = t.clientX; lastPY = t.clientY; }
+  }
+}, { passive: true });
+addEventListener('touchmove', function (e) {
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    if (t.identifier === stickId) stickSet(t.clientX, t.clientY);
+    else if (t.identifier === lookId) { look((t.clientX - lastPX) * 1.7, (t.clientY - lastPY) * 1.7); lastPX = t.clientX; lastPY = t.clientY; }
+  }
+}, { passive: true });
+function touchEnd(e) {
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    if (t.identifier === stickId) { stickId = null; stickClear(); }
+    if (t.identifier === lookId) lookId = null;
+  }
+}
+addEventListener('touchend', touchEnd, { passive: true });
+addEventListener('touchcancel', touchEnd, { passive: true });
+
+// toggles
+var tCeil = document.getElementById('tCeil'), tFly = document.getElementById('tFly');
+var tStudy = document.getElementById('tStudy');
+tStudy.addEventListener('click', function (e) {
+  e.stopPropagation();
+  var out = !hidden.study;
+  hidden.study = out;
+  if (groups.study) groups.study.visible = !out;
+  tStudy.setAttribute('aria-pressed', out ? 'false' : 'true');
+  lastRoom = '';           // force the room readout to re-resolve
+  drawBase();
+  tStudy.blur();
+});
+tCeil.addEventListener('click', function (e) {
+  e.stopPropagation();
+  ceiling.visible = !ceiling.visible;
+  hemi.intensity = ceiling.visible ? SHUT.hemi : OPEN.hemi;
+  sun.intensity = ceiling.visible ? SHUT.sun : OPEN.sun;
+  tCeil.setAttribute('aria-pressed', ceiling.visible ? 'true' : 'false');
+  tCeil.blur();
+});
+tFly.addEventListener('click', function (e) {
+  e.stopPropagation();
+  P.fly = !P.fly;
+  P.vy = 0;
+  tFly.setAttribute('aria-pressed', P.fly ? 'true' : 'false');
+  tFly.blur();
+});
+
+// ---------------------------------------------------------------- move
+function blocked(x, z) {
+  for (var i = 0; i < colliders.length; i++) {
+    var c = colliders[i];
+    if (c.g && hidden[c.g]) continue;
+    if (x > c.x0 - RAD && x < c.x1 + RAD && z > c.z0 - RAD && z < c.z1 + RAD) return true;
+  }
+  return false;
+}
+
+function step(dt) {
+  var f = 0, s = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) f += 1;
+  if (keys['KeyS'] || keys['ArrowDown']) f -= 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) s -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) s += 1;
+  if (ax || ay) { f += -ay; s += ax; }
+
+  var crouching = !!keys['KeyC'];
+  var running = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+  var speed = crouching ? 1.15 : (running ? 4.4 : 2.0);
+
+  var len = Math.hypot(f, s);
+  if (len > 1) { f /= len; s /= len; }
+
+  // forward is (cos yaw, sin yaw); right is 90 degrees on from it
+  var fx = Math.cos(P.yaw), fz = Math.sin(P.yaw);
+  var rx = -Math.sin(P.yaw), rz = Math.cos(P.yaw);
+  var dx = (fx * f + rx * s) * speed * dt;
+  var dz = (fz * f + rz * s) * speed * dt;
+
+  if (P.fly) {
+    P.x += dx; P.z += dz;
+    if (keys['Space']) P.y += 2.6 * dt;
+    if (crouching) P.y -= 2.6 * dt;
+    if (P.y < 0.3) P.y = 0.3;
+    if (P.y > 14) P.y = 14;
+    return;
+  }
+
+  if (!blocked(P.x + dx, P.z)) P.x += dx;
+  if (!blocked(P.x, P.z + dz)) P.z += dz;
+
+  var stand = crouching ? CROUCH : EYE;
+  if (!P.air && keys['Space']) { P.vy = 3.6; P.air = true; }
+  if (P.air) {
+    P.vy -= GRAV * dt;
+    P.y += P.vy * dt;
+    if (P.y <= stand) { P.y = stand; P.vy = 0; P.air = false; }
+  } else {
+    P.y += (stand - P.y) * Math.min(1, dt * 12);
+  }
+}
+
+// ---------------------------------------------------------------- minimap
+var map = document.getElementById('map');
+var mctx = map.getContext('2d');
+var MW = 236, MH = Math.round(MW * (BZ1 - BZ0) / (BX1 - BX0));
+var dpr = Math.min(window.devicePixelRatio || 1, 2);
+map.width = MW * dpr; map.height = MH * dpr;
+map.style.width = MW + 'px'; map.style.height = MH + 'px';
+var base = document.createElement('canvas');
+base.width = map.width; base.height = map.height;
+function drawBase() {
+  var g = base.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, MW, MH);
+  var sx = MW / (BX1 - BX0), sz = MH / (BZ1 - BZ0);
+  function px(x) { return (x - BX0) * sx; }
+  function pz(z) { return (z - BZ0) * sz; }
+  g.fillStyle = 'rgba(8,14,18,.55)';
+  g.fillRect(0, 0, MW, MH);
+  for (var i = 0; i < S.floors.length; i++) {
+    var f = S.floors[i];
+    g.beginPath();
+    for (var j = 0; j < f.p.length; j++) {
+      if (j === 0) g.moveTo(px(f.p[j][0]), pz(f.p[j][1])); else g.lineTo(px(f.p[j][0]), pz(f.p[j][1]));
+    }
+    g.closePath();
+    g.fillStyle = f.out ? 'rgba(150,160,166,.42)' : 'rgba(226,214,196,.74)';
+    g.fill();
+  }
+  g.fillStyle = 'rgba(20,28,34,.92)';
+  for (var i = 0; i < S.boxes.length; i++) {
+    var q = S.boxes[i].b;
+    if (!(q[4] >= 2.0 && q[1] < 1.70)) continue;
+    if (S.boxes[i].g && hidden[S.boxes[i].g]) continue;
+    g.fillRect(px(q[0]), pz(q[2]), Math.max(1, (q[3] - q[0]) * sx), Math.max(1, (q[5] - q[2]) * sz));
+  }
+}
+drawBase();
+
+function drawMap() {
+  mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  mctx.clearRect(0, 0, MW, MH);
+  mctx.drawImage(base, 0, 0, MW, MH);
+  var sx = MW / (BX1 - BX0), sz = MH / (BZ1 - BZ0);
+  var x = (P.x - BX0) * sx, z = (P.z - BZ0) * sz;
+  mctx.save();
+  mctx.translate(x, z);
+  mctx.rotate(P.yaw);
+  mctx.beginPath();
+  mctx.moveTo(8, 0); mctx.lineTo(-5, 5); mctx.lineTo(-5, -5);
+  mctx.closePath();
+  mctx.fillStyle = '#E0A64A';
+  mctx.strokeStyle = 'rgba(8,14,18,.9)';
+  mctx.lineWidth = 1.4;
+  mctx.fill(); mctx.stroke();
+  mctx.restore();
+}
+
+// ---------------------------------------------------------------- loop
+var nameEl = document.getElementById('roomName'), metaEl = document.getElementById('roomMeta');
+var lastRoom = '';
+function setRoom() {
+  var r = roomAt(P.x, P.z);
+  if (r && r.name === 'Study' && hidden.study) r = roomAt(12.0, 2.0);  // it is all living room now
+  var n = r ? r.name : 'Outside';
+  if (n === lastRoom) return;
+  lastRoom = n;
+  nameEl.textContent = n;
+  if (r && !r.outside) {
+    metaEl.textContent = r.area.toFixed(1) + ' m² · ' + Math.round(r.area * 10.7639) + ' sqft';
+  } else {
+    metaEl.textContent = r ? 'common area' : '—';
+  }
+}
+
+function resize() {
+  var w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+var prev = performance.now(), bob = 0;
+function frame(now) {
+  var dt = Math.min(0.05, (now - prev) / 1000);
+  prev = now;
+  if (walking) step(dt);
+
+  var moving = (Math.abs(ax) + Math.abs(ay)) > 0.08 ||
+    keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'] ||
+    keys['ArrowUp'] || keys['ArrowDown'] || keys['ArrowLeft'] || keys['ArrowRight'];
+  bob += dt * (moving && !P.air && !P.fly ? (keys['ShiftLeft'] || keys['ShiftRight'] ? 13 : 8) : 0);
+  var bobY = moving && !P.air && !P.fly ? Math.sin(bob) * 0.022 : 0;
+
+  camera.position.set(P.x, P.y + bobY, P.z);
+  camera.rotation.y = -P.yaw - Math.PI / 2;
+  camera.rotation.x = P.pitch;
+
+  setRoom();
+  drawMap();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+if (!window.WebGLRenderingContext) {
+  note.textContent = 'This browser has no WebGL, so the 3D view will not run.';
+}
+})();
+</script>
+
+</body></html>
